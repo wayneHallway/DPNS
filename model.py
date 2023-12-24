@@ -1,9 +1,3 @@
-'''
-Created on October 1, 2020
-
-@author: Tinglin Huang (huangtinglin@outlook.com)
-'''
-#这个要大改和mf那个完全不一样
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -111,9 +105,9 @@ class LightGCN1(nn.Module):
         self.bias = nn.Parameter(self.bias)
 
         self.gcn = self._init_model()
-        #这里的self.GCN就是在调用图卷积
+        
     def _init_weight(self):
-        #随机初始化U和I的embeding
+       
         initializer = nn.init.xavier_uniform_
         self.user_embed = initializer(torch.empty(self.n_users, self.emb_size))
         self.item_embed = initializer(torch.empty(self.n_items, self.emb_size))
@@ -123,7 +117,7 @@ class LightGCN1(nn.Module):
         self.sparse_norm_adj = self._convert_sp_mat_to_sp_tensor(self.adj_mat).to(self.device)
 
     def _init_model(self):
-        #这里是调用图卷积的地方
+        
         return GraphConv(n_hops=self.context_hops,
                          n_users=self.n_users,
                          interact_mat=self.sparse_norm_adj,
@@ -166,14 +160,7 @@ class LightGCN1(nn.Module):
                                                                 neg_item[:, k * self.n_negs: (k + 1) * self.n_negs],
                                                                 pos_item))
             neg_gcn_embs = torch.stack(neg_gcn_embs, dim=1)
-        else:
-            neg_gcn_embs = []
-            for k in range(self.K):
-                neg_gcn_embs.append(self.mix_negative_sampling(user_gcn_emb, item_gcn_emb,
-                                                               user,
-                                                               neg_item[:, k * self.n_negs: (k + 1) * self.n_negs],
-                                                               pos_item))
-            neg_gcn_embs = torch.stack(neg_gcn_embs, dim=1)
+        
         n_neg_gcn_embs = [] 
         for k in range(self.K): 
             n_neg_gcn_embs.append(self.n_negative_sampling(cur_epoch, user_gcn_emb, item_gcn_emb,
@@ -214,7 +201,7 @@ class LightGCN1(nn.Module):
         neg_items_emb_ = n_e.permute([0, 2, 1, 3])  # [batch_size, n_hops+1, n_negs, channel]
 
         return neg_items_emb_[[[i] for i in range(batch_size)], range(neg_items_emb_.shape[1]), indices, :]
-    #感觉这个东西没啥用，但是真负样本的采集可以用到这种方法，然后发现真负样本的采集会使得整个模型的鲁棒性增强
+    
     def dise_negative_sampling(self, cur_epoch, user_gcn_emb, item_gcn_emb, user, neg_candidates, pos_item):
         import torch.nn.functional as F
 
@@ -252,7 +239,7 @@ class LightGCN1(nn.Module):
         return neg_items_emb_[[[i] for i in range(batch_size)], range(neg_items_emb_.shape[1]), indices, :]
 
     def dynamic_negative_sampling(self, user_gcn_emb, item_gcn_emb, user, neg_candidates,cur_epoch):
-        #选择与用户相乘得分最高的负样本进行采样
+
         s_e = user_gcn_emb[user]  # [batch_size, n_hops+1, channel]
         n_e = item_gcn_emb[neg_candidates]  # [batch_size, n_negs, n_hops+1, channel] 
         if self.pool == 'mean':
@@ -265,7 +252,7 @@ class LightGCN1(nn.Module):
         
         s_e1 = s_e + torch.sign(s_e) * normalized_noise * self.eps
         s_e2 = s_e - torch.sign(s_e) * normalized_noise * self.eps
-#第三个框的结果就是这份代码的结果
+
 
         """Dynamic negative sampling"""
         scores1 = (s_e.unsqueeze(dim=1) * n_e).sum(dim=-1)  # [batch_size, n_negs]
@@ -278,38 +265,7 @@ class LightGCN1(nn.Module):
 
         return item_gcn_emb[neg_item]
         
-    def mix_negative_sampling(self, user_gcn_emb, item_gcn_emb, user, neg_candidates, pos_item):
-        batch_size = user.shape[0]
-        s_e, p_e = user_gcn_emb[user], item_gcn_emb[pos_item]  # [batch_size, n_hops+1, channel]
-        if self.pool != 'concat':
-            s_e = self.pooling(s_e).unsqueeze(dim=1)
-
-        """positive mixing"""
-        seed = torch.rand(batch_size, 1, p_e.shape[1], 1).to(p_e.device)  # (0, 1)
-        n_e = item_gcn_emb[neg_candidates]  # [batch_size, n_negs, n_hops, channel]
-        n_e_ = seed * p_e.unsqueeze(dim=1) + (1 - seed) * n_e  # mixing
-        #这里应该是通过设置随机数来进行负采样
-
-        """hop mixing"""
-        scores = (s_e.unsqueeze(dim=1) * n_e_).sum(dim=-1)  # [batch_size, n_negs, n_hops+1]
-        indices = torch.max(scores, dim=1)[1].detach()
-        neg_items_emb_ = n_e_.permute([0, 2, 1, 3])  # [batch_size, n_hops+1, n_negs, channel]
-        # [batch_size, n_hops+1, channel]
-        return neg_items_emb_[[[i] for i in range(batch_size)],
-               range(neg_items_emb_.shape[1]), indices, :]
     
-
-    def pooling(self, embeddings):
-        # [-1, n_hops, channel]
-        if self.pool == 'mean':
-            return embeddings.mean(dim=1)
-        elif self.pool == 'sum':
-            return embeddings.sum(dim=1)
-        elif self.pool == 'concat':
-            return embeddings.view(embeddings.shape[0], -1)
-        else:  # final
-            return embeddings[:, -1, :]
-
     def generate(self, split=True):
         user_gcn_emb, item_gcn_emb = self.gcn(self.user_embed,
                                               self.item_embed,
@@ -323,7 +279,7 @@ class LightGCN1(nn.Module):
 
     def rating(self, u_g_embeddings=None, i_g_embeddings=None):
         return torch.matmul(u_g_embeddings, i_g_embeddings.t())
-#也有可能这里的rating'是固定的,不是固定的每次都会再计算，固定的原因是设定了种子
+
     def create_bpr_loss(self, cur_epoch, user_gcn_emb, pos_gcn_embs, p_neg_gcn_embs, n_neg_gcn_embs):
         # user_gcn_emb: [batch_size, n_hops+1, channel]
         # pos_gcn_embs: [batch_size, n_hops+1, channel]
@@ -333,16 +289,15 @@ class LightGCN1(nn.Module):
 
         u_e = self.pooling(user_gcn_emb)
         pos_e = self.pooling(pos_gcn_embs)
-        #neg_e 的维度是 [batch_size, K, channel] 
+        
         neg_e = self.pooling(p_neg_gcn_embs.view(-1, p_neg_gcn_embs.shape[2], p_neg_gcn_embs.shape[3])).view(batch_size,
                                                                                                        self.K, -1)
 
         
-        #别乱改参数，改参数的话每次都要记录
-        #目前看来这个得大于0.3
+        
         n_e = p_neg_gcn_embs * (1-min(0.9,cur_epoch/(self.warmup+50))) if (cur_epoch / self.warmup) > self.beta else p_neg_gcn_embs
         hard_gcn_embs=pos_gcn_embs.unsqueeze(dim=1)*min(0.9,max(0,cur_epoch/(self.warmup+50)))+n_e
-        #我还得做实验看一下是从0开始加正样本比较好，还是直接加上30%的比较好
+       
         
         hard_neg_e = self.pooling(hard_gcn_embs.view(-1, hard_gcn_embs.shape[2], hard_gcn_embs.shape[3])).view(batch_size,
                                                                                                        self.K, -1)
@@ -361,51 +316,33 @@ class LightGCN1(nn.Module):
         
         if self.ns == 'novel' and self.gamma > 0.:
             
-            
-            #经实验鉴定这个地方的向量构造还是有效的
+        
 
             gate_neg = torch.sigmoid(self.neg_gate(p_neg_gcn_embs))
             gated_neg_e_r = p_neg_gcn_embs * gate_neg
             gated_neg_e_ir = p_neg_gcn_embs - gated_neg_e_r
             
             
-            
-            # gated_hard_e_r = self.pooling(gated_hard_e_r.view(-1, hard_gcn_embs.shape[2], hard_gcn_embs.shape[3])).view(batch_size, self.K, -1)
-            # gated_hard_e_ir = self.pooling(gated_hard_e_ir.view(-1, hard_gcn_embs.shape[2], hard_gcn_embs.shape[3])).view(batch_size, self.K, -1)
-
-            
-            
             gated_neg_e_r = self.pooling(gated_neg_e_r.view(-1, n_neg_gcn_embs.shape[2], n_neg_gcn_embs.shape[3])).view(batch_size, self.K, -1)
-            
-            
             gated_neg_e_ir = self.pooling(gated_neg_e_ir.view(-1, n_neg_gcn_embs.shape[2], n_neg_gcn_embs.shape[3])).view(batch_size, self.K, -1)
-
-            
             gated_neg_scores_r = torch.sum(torch.mul(u_e.unsqueeze(dim=1), gated_neg_e_r), axis=-1)  # [batch_size, K]
-            
-            
             gated_neg_scores_ir = torch.sum(torch.mul(u_e.unsqueeze(dim=1), gated_neg_e_ir), axis=-1)  # [batch_size, K]
             
         
             
            
             # BPR
-            # mf_loss += self.gamma * torch.mean(torch.log(1 + torch.exp(gated_neg_scores_r - gated_n_neg_scores_r.unsqueeze(dim=1)).sum(dim=1)))
-            
             mf_loss += self.gamma * (torch.mean(torch.log(1 + torch.exp(gated_neg_scores_r - gated_neg_scores_ir).sum(dim=1))))#+torch.mean(torch.log(1 + torch.exp(score2 - score1).sum(dim=1)))
             
             
             
             
-            # mf_loss += self.gamma * (torch.mean(torch.log(1 + torch.exp(gated_neg_scores_r - gated_neg_scores_ir).sum(dim=1))) + torch.mean(torch.log(1 + torch.exp(gated_pos_scores_ir.unsqueeze(dim=1) - gated_neg_scores_ir).sum(dim=1)))) / 2
-            #mf_loss += self.gamma * (torch.mean(torch.log(1 + torch.exp(gated_pos_scores_ir - gated_pos_scores_r))) + torch.mean(torch.log(1 + torch.exp(gated_neg_scores_r - gated_neg_scores_ir).sum(dim=1))) + torch.mean(torch.log(1 + torch.exp(gated_neg_scores_r - gated_pos_scores_r.unsqueeze(dim=1)).sum(dim=1))) + torch.mean(torch.log(1 + torch.exp(gated_pos_scores_ir.unsqueeze(dim=1) - gated_neg_scores_ir).sum(dim=1)))) / 4
-            #用上面的loss反而效果不是很好    
-
+            
         # cul regularizer
         regularize = ((torch.norm(user_gcn_emb[:, 0, :]) ** 2)
                       + (torch.norm(pos_gcn_embs[:, 0, :]) ** 2)
                       + (torch.norm(p_neg_gcn_embs[:, :, 0, :]) ** 2)+(torch.norm(n_neg_gcn_embs[:, :, 0, :]) ** 2)) / 2  # take hop=0,目前来看“-”是效果最好的改动,这个改动目前看来只能说明，这个地方是加或者减号都没用任何影响
-        emb_loss =self.decay * regularize / batch_size #+cur_epoch*torch.mm(self.bias,self.bias.T)#这里的loss和regularize有改进空间
-        #这里的时间应作为一个有效的因子弄进loss，这样可以明显提升recall，不能只是简单相加，也有可能要时间和regularize里面的“-”
+        emb_loss =self.decay * regularize / batch_size #+cur_epoch*torch.mm(self.bias,self.bias.T)
+        
         
         return mf_loss + emb_loss, mf_loss, emb_loss
