@@ -64,7 +64,6 @@ class GraphConv(nn.Module):
         embs = torch.stack(embs, dim=1)  # [n_entity, n_hops+1, emb_size]
         return embs[:self.n_users, :], embs[self.n_users:, :]
 
-
 class LightGCN1(nn.Module):
     def __init__(self, data_config, args_config, adj_mat):
         super(LightGCN1, self).__init__()
@@ -108,7 +107,7 @@ class LightGCN1(nn.Module):
         self.gcn = self._init_model()
         #这里的self.GCN就是在调用图卷积
     def _init_weight(self):
-        #随机初始化U和I的embeding
+        
         initializer = nn.init.xavier_uniform_
         self.user_embed = initializer(torch.empty(self.n_users, self.emb_size))
         self.item_embed = initializer(torch.empty(self.n_items, self.emb_size))
@@ -118,7 +117,7 @@ class LightGCN1(nn.Module):
         self.sparse_norm_adj = self._convert_sp_mat_to_sp_tensor(self.adj_mat).to(self.device)
 
     def _init_model(self):
-        #这里是调用图卷积的地方
+       
         return GraphConv(n_hops=self.context_hops,
                          n_users=self.n_users,
                          interact_mat=self.sparse_norm_adj,
@@ -171,9 +170,9 @@ class LightGCN1(nn.Module):
         n_e = item_gcn_emb[neg_candidates]  # [batch_size, n_negs, n_hops+1, channel]
 
         gate_n = torch.sigmoid(self.neg_gate(n_e))
-        gated_n_e = n_e * gate_n  # [batch_size, n_negs, n_hops+1, channel]
+        multi_n_e = n_e * gate_n  # [batch_size, n_negs, n_hops+1, channel]
 
-        n_e_sel = (1 - min(1, cur_epoch / self.warmup)) * n_e - gated_n_e  # [batch_size, n_negs, n_hops+1, channel]
+        low_reduce_sample = (1 - min(1, cur_epoch / self.warmup)) * n_e - multi_n_e  # [batch_size, n_negs, n_hops+1, channel]
 
         """Add random noise to s_e"""
         random_noise1 = torch.rand_like(s_e).cuda()
@@ -185,9 +184,9 @@ class LightGCN1(nn.Module):
         s_e2 = s_e - torch.sign(s_e) * normalized_noise2 * self.eps
 
         """Dynamic negative sampling"""
-        scores1 = (s_e.unsqueeze(dim=1) * n_e_sel).sum(dim=-1)  # [batch_size, n_negs, n_hops+1]
-        scores2 = (s_e1.unsqueeze(dim=1) * n_e_sel).sum(dim=-1)  # [batch_size, n_negs, n_hops+1]
-        scores3 = (s_e2.unsqueeze(dim=1) * n_e_sel).sum(dim=-1)  # [batch_size, n_negs, n_hops+1]
+        scores1 = (s_e.unsqueeze(dim=1) * low_reduce_sample).sum(dim=-1)  # [batch_size, n_negs, n_hops+1]
+        scores2 = (s_e1.unsqueeze(dim=1) * low_reduce_sample).sum(dim=-1)  # [batch_size, n_negs, n_hops+1]
+        scores3 = (s_e2.unsqueeze(dim=1) * low_reduce_sample).sum(dim=-1)  # [batch_size, n_negs, n_hops+1]
 
         scores_avg = (scores1 + scores2 + scores3) / 3.0  # Average scores
         indices = torch.min(scores_avg, dim=1)[1].detach()
@@ -204,9 +203,9 @@ class LightGCN1(nn.Module):
 
         
         gate_n = torch.sigmoid(self.neg_gate(n_e) )
-        gated_n_e = n_e * gate_n  # [batch_size, n_negs, n_hops+1, channel]
+        multi_n_e = n_e * gate_n  # [batch_size, n_negs, n_hops+1, channel]
 
-        n_e_sel = (1 - min(0.6, cur_epoch / self.warmup)) * n_e - min(0.6, cur_epoch / self.warmup)*gated_n_e  # [batch_size, n_negs, n_hops+1, channel]
+        low_reduce_sample = (1 - min(0.6, cur_epoch / self.warmup)) * n_e - min(0.6, cur_epoch / self.warmup)*multi_n_e  # [batch_size, n_negs, n_hops+1, channel]
 
         """Add random noise to s_e"""
         random_noise1 = torch.rand_like(s_e).cuda()
@@ -221,9 +220,9 @@ class LightGCN1(nn.Module):
         
         
         """Dynamic negative sampling"""
-        scores1 = (s_e.unsqueeze(dim=1) * n_e_sel).sum(dim=-1)  # [batch_size, n_negs, n_hops+1]
-        scores2 = (s_e1.unsqueeze(dim=1) * n_e_sel).sum(dim=-1)  # [batch_size, n_negs, n_hops+1]
-        scores3 = (s_e2.unsqueeze(dim=1) * n_e_sel).sum(dim=-1)  # [batch_size, n_negs, n_hops+1]
+        scores1 = (s_e.unsqueeze(dim=1) * low_reduce_sample).sum(dim=-1)  # [batch_size, n_negs, n_hops+1]
+        scores2 = (s_e1.unsqueeze(dim=1) * low_reduce_sample).sum(dim=-1)  # [batch_size, n_negs, n_hops+1]
+        scores3 = (s_e2.unsqueeze(dim=1) * low_reduce_sample).sum(dim=-1)  # [batch_size, n_negs, n_hops+1]
 
         scores_avg = (scores1 + scores2 + scores3)/3.0   # Average scores
         indices = torch.max(scores_avg, dim=1)[1].detach()
@@ -299,34 +298,34 @@ class LightGCN1(nn.Module):
             
 
             gate_neg = torch.sigmoid(self.neg_gate(p_neg_gcn_embs))
-            gated_neg_e_r = p_neg_gcn_embs * gate_neg
-            gated_neg_e_ir = p_neg_gcn_embs - gated_neg_e_r
+            multi_neg_e_r = p_neg_gcn_embs * gate_neg
+            multi_neg_e_ir = p_neg_gcn_embs - multi_neg_e_r
             
             
             
-            # gated_hard_e_r = self.pooling(gated_hard_e_r.view(-1, hard_gcn_embs.shape[2], hard_gcn_embs.shape[3])).view(batch_size, self.K, -1)
-            # gated_hard_e_ir = self.pooling(gated_hard_e_ir.view(-1, hard_gcn_embs.shape[2], hard_gcn_embs.shape[3])).view(batch_size, self.K, -1)
+            # multi_hard_e_r = self.pooling(multi_hard_e_r.view(-1, hard_gcn_embs.shape[2], hard_gcn_embs.shape[3])).view(batch_size, self.K, -1)
+            # multi_hard_e_ir = self.pooling(multi_hard_e_ir.view(-1, hard_gcn_embs.shape[2], hard_gcn_embs.shape[3])).view(batch_size, self.K, -1)
 
             
             
-            gated_neg_e_r = self.pooling(gated_neg_e_r.view(-1, n_neg_gcn_embs.shape[2], n_neg_gcn_embs.shape[3])).view(batch_size, self.K, -1)
+            multi_neg_e_r = self.pooling(multi_neg_e_r.view(-1, n_neg_gcn_embs.shape[2], n_neg_gcn_embs.shape[3])).view(batch_size, self.K, -1)
             
             
-            gated_neg_e_ir = self.pooling(gated_neg_e_ir.view(-1, n_neg_gcn_embs.shape[2], n_neg_gcn_embs.shape[3])).view(batch_size, self.K, -1)
+            multi_neg_e_ir = self.pooling(multi_neg_e_ir.view(-1, n_neg_gcn_embs.shape[2], n_neg_gcn_embs.shape[3])).view(batch_size, self.K, -1)
 
             
-            gated_neg_scores_r = torch.sum(torch.mul(u_e.unsqueeze(dim=1), gated_neg_e_r), axis=-1)  # [batch_size, K]
+            multi_neg_scores_r = torch.sum(torch.mul(u_e.unsqueeze(dim=1), multi_neg_e_r), axis=-1)  # [batch_size, K]
             
             
-            gated_neg_scores_ir = torch.sum(torch.mul(u_e.unsqueeze(dim=1), gated_neg_e_ir), axis=-1)  # [batch_size, K]
+            multi_neg_scores_ir = torch.sum(torch.mul(u_e.unsqueeze(dim=1), multi_neg_e_ir), axis=-1)  # [batch_size, K]
             
         
             
            
             # BPR
-            # mf_loss += self.gamma * torch.mean(torch.log(1 + torch.exp(gated_neg_scores_r - gated_n_neg_scores_r.unsqueeze(dim=1)).sum(dim=1)))
+            # mf_loss += self.gamma * torch.mean(torch.log(1 + torch.exp(multi_neg_scores_r - multi_n_neg_scores_r.unsqueeze(dim=1)).sum(dim=1)))
             
-            mf_loss += self.gamma * (torch.mean(torch.log(1 + torch.exp(gated_neg_scores_r - gated_neg_scores_ir).sum(dim=1))))#+torch.mean(torch.log(1 + torch.exp(score2 - score1).sum(dim=1)))
+            mf_loss += self.gamma * (torch.mean(torch.log(1 + torch.exp(multi_neg_scores_r - multi_neg_scores_ir).sum(dim=1))))#+torch.mean(torch.log(1 + torch.exp(score2 - score1).sum(dim=1)))
             
             
             
@@ -336,7 +335,8 @@ class LightGCN1(nn.Module):
         # cul regularizer
         regularize = ((torch.norm(user_gcn_emb[:, 0, :]) ** 2)
                       + (torch.norm(pos_gcn_embs[:, 0, :]) ** 2)
-                      + (torch.norm(p_neg_gcn_embs[:, :, 0, :]) ** 2)+(torch.norm(n_neg_gcn_embs[:, :, 0, :]) ** 2)) / 2  # take hop=0,目前来看“-”是效果最好的改动,这个改动目前看来只能说明，这个地方是加或者减号都没用任何影响
-        emb_loss =self.decay * regularize / batch_size #+cur_epoch*torch.mm(self.bias,self.bias.T)#这里的loss和regularize有改进空间
-        
+                      + (torch.norm(p_neg_gcn_embs[:, :, 0, :]) ** 2)+(torch.norm(n_neg_gcn_embs[:, :, 0, :]) ** 2)) / 2 
+        emb_loss =self.decay * regularize / batch_size #+cur_epoch*torch.mm(self.bias,self.bias.T)
         return mf_loss + emb_loss, mf_loss, emb_loss
+
+
